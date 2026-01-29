@@ -1,0 +1,231 @@
+--// SERVICES
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting = game:GetService("Lighting")
+
+local player = Players.LocalPlayer
+
+--// GUI
+local gui = Instance.new("ScreenGui", player.PlayerGui)
+gui.ResetOnSpawn = false
+
+--// MAIN FRAME (SQUARE)
+local main = Instance.new("Frame", gui)
+main.Size = UDim2.fromScale(0.7, 0.7)
+main.Position = UDim2.fromScale(0.5, 0.5)
+main.AnchorPoint = Vector2.new(0.5, 0.5)
+main.BackgroundColor3 = Color3.fromRGB(18,18,18)
+main.BorderSizePixel = 0
+
+--// TOP BAR
+local top = Instance.new("Frame", main)
+top.Size = UDim2.fromScale(1, 0.1)
+top.BackgroundColor3 = Color3.fromRGB(0,120,255)
+top.BorderSizePixel = 0
+
+local title = Instance.new("TextLabel", top)
+title.Size = UDim2.fromScale(1,1)
+title.Text = "MAIN UI"
+title.Font = Enum.Font.GothamBold
+title.TextScaled = true
+title.TextColor3 = Color3.new(1,1,1)
+title.BackgroundTransparency = 1
+
+--// TAB BAR
+local tabBar = Instance.new("Frame", main)
+tabBar.Size = UDim2.fromScale(1,0.1)
+tabBar.Position = UDim2.fromScale(0,0.1)
+tabBar.BackgroundColor3 = Color3.fromRGB(25,25,25)
+
+local mainTab = Instance.new("TextButton", tabBar)
+mainTab.Size = UDim2.fromScale(1,1)
+mainTab.Text = "MAIN"
+mainTab.Font = Enum.Font.GothamBold
+mainTab.TextScaled = true
+mainTab.TextColor3 = Color3.new(1,1,1)
+mainTab.BackgroundColor3 = Color3.fromRGB(30,30,30)
+mainTab.BorderSizePixel = 0
+
+--// CONTENT
+local content = Instance.new("Frame", main)
+content.Size = UDim2.fromScale(1,0.8)
+content.Position = UDim2.fromScale(0,0.2)
+content.BackgroundTransparency = 1
+
+local layout = Instance.new("UIListLayout", content)
+layout.Padding = UDim.new(0,8)
+layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+--// TOGGLE FUNCTION
+local function toggle(text, callback)
+	local b = Instance.new("TextButton", content)
+	b.Size = UDim2.fromScale(0.9,0.12)
+	b.Text = "[ OFF ] "..text
+	b.Font = Enum.Font.Gotham
+	b.TextScaled = true
+	b.TextColor3 = Color3.new(1,1,1)
+	b.BackgroundColor3 = Color3.fromRGB(35,35,35)
+	b.BorderSizePixel = 0
+
+	local on = false
+	b.Activated:Connect(function()
+		on = not on
+		b.Text = (on and "[ ON ] " or "[ OFF ] ")..text
+		b.BackgroundColor3 = on and Color3.fromRGB(0,120,255) or Color3.fromRGB(35,35,35)
+		callback(on)
+	end)
+end
+
+-------------------------------------------------
+-- ðŸ”« AUTO AMMO + HP
+-------------------------------------------------
+local collectHealth = false
+local collectAmmo = false
+
+RunService.RenderStepped:Connect(function()
+	if not (collectHealth or collectAmmo) then return end
+
+	local character = player.Character
+	if not character then return end
+
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character:FindFirstChild("Humanoid")
+	if not hrp or not humanoid then return end
+
+	local needsHealth = humanoid.Health < humanoid.MaxHealth
+
+	for _, obj in pairs(workspace:GetChildren()) do
+		if obj.Name == "_drop" and obj:IsA("BasePart") then
+			if (collectHealth and obj:FindFirstChild("Health") and needsHealth)
+			or (collectAmmo and obj:FindFirstChild("Ammo")) then
+				pcall(function()
+					firetouchinterest(hrp, obj, 0)
+					firetouchinterest(hrp, obj, 1)
+				end)
+			end
+		end
+	end
+end)
+
+toggle("Auto Ammo & HP", function(v)
+	collectHealth = v
+	collectAmmo = v
+end)
+
+-------------------------------------------------
+-- â™» AUTO RESPAWN
+-------------------------------------------------
+local autoRespawn = false
+local respawnRemote =
+	ReplicatedStorage:WaitForChild("Remotes")
+	:WaitForChild("Duels")
+	:WaitForChild("RespawnNow")
+
+local function setupRespawn(character)
+	local humanoid = character:WaitForChild("Humanoid")
+	humanoid.Died:Connect(function()
+		if not autoRespawn then return end
+		task.wait()
+		pcall(function()
+			respawnRemote:FireServer()
+		end)
+	end)
+end
+
+player.CharacterAdded:Connect(setupRespawn)
+if player.Character then
+	setupRespawn(player.Character)
+end
+
+toggle("Auto Respawn", function(v)
+	autoRespawn = v
+end)
+
+-------------------------------------------------
+-- âš¡ FPS BOOSTER
+-------------------------------------------------
+local fpsBoosterEnabled = false
+
+local function enableFPSBooster()
+	-- Lighting optimizations
+	Lighting.GlobalShadows = false
+	Lighting.FogEnd = 9e9
+	Lighting.Brightness = 1
+
+	for _, v in pairs(Lighting:GetChildren()) do
+		if v:IsA("PostEffect") then
+			v.Enabled = false
+		end
+	end
+
+	-- Workspace optimizations
+	for _, v in pairs(workspace:GetDescendants()) do
+		if v:IsA("ParticleEmitter")
+		or v:IsA("Trail")
+		or v:IsA("Fire")
+		or v:IsA("Smoke") then
+			v.Enabled = false
+
+		elseif v:IsA("BasePart") then
+			v.Material = Enum.Material.Plastic
+			v.Reflectance = 0
+
+		elseif v:IsA("Decal") or v:IsA("Texture") then
+			v.Transparency = 1
+		end
+	end
+
+	-- Lowest graphics
+	pcall(function()
+		settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+	end)
+end
+
+toggle("FPS Booster", function(v)
+	fpsBoosterEnabled = v
+	if fpsBoosterEnabled then
+		enableFPSBooster()
+	end
+end)
+
+-------------------------------------------------
+-- ðŸ“± DRAG (MOBILE)
+-------------------------------------------------
+local dragging,start,pos
+top.InputBegan:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		start = i.Position
+		pos = main.Position
+	end
+end)
+
+UIS.InputChanged:Connect(function(i)
+	if dragging and i.UserInputType == Enum.UserInputType.Touch then
+		local d = i.Position - start
+		main.Position = UDim2.new(pos.X.Scale,pos.X.Offset+d.X,pos.Y.Scale,pos.Y.Offset+d.Y)
+	end
+end)
+
+UIS.InputEnded:Connect(function()
+	dragging = false
+end)
+
+-------------------------------------------------
+-- MENU BUTTON
+-------------------------------------------------
+local menu = Instance.new("TextButton", gui)
+menu.Size = UDim2.fromScale(0.18,0.1)
+menu.Position = UDim2.fromScale(0.02,0.45)
+menu.Text = "OPEN"
+menu.Font = Enum.Font.GothamBold
+menu.TextScaled = true
+menu.TextColor3 = Color3.new(1,1,1)
+menu.BackgroundColor3 = Color3.fromRGB(0,120,255)
+menu.BorderSizePixel = 0
+
+menu.Activated:Connect(function()
+	main.Visible = not main.Visible
+end)

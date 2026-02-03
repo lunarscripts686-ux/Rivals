@@ -1,0 +1,155 @@
+--// Services
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local RS = game:GetService("ReplicatedStorage")
+
+local LocalPlayer = Players.LocalPlayer
+local UseItem = RS.Remotes.Replication.Fighter.UseItem
+
+--// GUI
+local gui = Instance.new("ScreenGui")
+gui.Name = "CombatGui"
+gui.Parent = CoreGui
+gui.ResetOnSpawn = false
+
+-- Main window
+local frame = Instance.new("Frame")
+frame.Size = UDim2.fromOffset(200,120)
+frame.Position = UDim2.fromScale(0.4,0.4)
+frame.BackgroundColor3 = Color3.fromRGB(25,25,25)
+frame.Active = true
+frame.Draggable = true
+frame.Visible = true
+frame.Parent = gui
+
+-- Toggle button
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.fromOffset(120,40)
+toggleBtn.Position = UDim2.fromScale(0.05,0.4)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(40,40,40)
+toggleBtn.TextColor3 = Color3.new(1,1,1)
+toggleBtn.Text = "Open / Close"
+toggleBtn.Active = true
+toggleBtn.Draggable = true
+toggleBtn.Parent = gui
+
+toggleBtn.MouseButton1Click:Connect(function()
+	frame.Visible = not frame.Visible
+end)
+
+-- Buttons
+local autoBtn = Instance.new("TextButton")
+autoBtn.Size = UDim2.fromScale(1,0.5)
+autoBtn.Position = UDim2.fromScale(0,0)
+autoBtn.Text = "Auto Backshot: OFF"
+autoBtn.BackgroundColor3 = Color3.fromRGB(40,40,40)
+autoBtn.TextColor3 = Color3.new(1,1,1)
+autoBtn.Parent = frame
+
+local hitboxBtn = Instance.new("TextButton")
+hitboxBtn.Size = UDim2.fromScale(1,0.5)
+hitboxBtn.Position = UDim2.fromScale(0,0.5)
+hitboxBtn.Text = "Hitbox Expander: OFF"
+hitboxBtn.BackgroundColor3 = Color3.fromRGB(40,40,40)
+hitboxBtn.TextColor3 = Color3.new(1,1,1)
+hitboxBtn.Parent = frame
+
+-- States
+local autoBackshot = false
+local hitboxEnabled = false
+local hitboxSize = 10
+
+-- Store original sizes so they don't stack
+local originalSizes = {}
+
+-- Hitbox Loop (fixed)
+task.spawn(function()
+	while true do
+		if hitboxEnabled then
+			for _,plr in pairs(Players:GetPlayers()) do
+				if plr ~= LocalPlayer and plr.Character then
+					local hb = plr.Character:FindFirstChild("HitboxBody")
+					if hb and hb:IsA("BasePart") then
+						if not originalSizes[hb] then
+							originalSizes[hb] = hb.Size
+						end
+
+						hb.Size = originalSizes[hb] + Vector3.new(hitboxSize,hitboxSize,hitboxSize)
+						hb.Transparency = 0.5
+						hb.CanCollide = false
+					end
+				end
+			end
+		end
+		task.wait(0.5)
+	end
+end)
+
+-- Toggle Hitbox
+hitboxBtn.MouseButton1Click:Connect(function()
+	hitboxEnabled = not hitboxEnabled
+	hitboxBtn.Text = "Hitbox Expander: " .. (hitboxEnabled and "ON" or "OFF")
+
+	if not hitboxEnabled then
+		for hb, size in pairs(originalSizes) do
+			if hb and hb.Parent then
+				hb.Size = size
+				hb.Transparency = 1
+			end
+		end
+	end
+end)
+
+-- Target finder
+local function getTarget()
+	local char = LocalPlayer.Character
+	if not char then return end
+
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	local closest, dist = nil, math.huge
+
+	for _,plr in pairs(Players:GetPlayers()) do
+		if plr ~= LocalPlayer and plr.Character then
+			local hb = plr.Character:FindFirstChild("HitboxBody")
+			if hb then
+				local d = (hb.Position - hrp.Position).Magnitude
+				if d < dist then
+					dist = d
+					closest = hb
+				end
+			end
+		end
+	end
+
+	return closest
+end
+
+-- Auto Backshot Loop (always running, clean toggle)
+task.spawn(function()
+	while true do
+		if autoBackshot then
+			local targetHB = getTarget()
+			if targetHB then
+				local args = {
+					[1] = "\240\150\179\160",
+					[2] = "\28",
+					[3] = {
+						["\1"] = {
+							["\2"] = targetHB
+						},
+						["\2"] = "\205\131"
+					}
+				}
+				UseItem:FireServer(unpack(args))
+			end
+		end
+		task.wait(0.15)
+	end
+end)
+
+autoBtn.MouseButton1Click:Connect(function()
+	autoBackshot = not autoBackshot
+	autoBtn.Text = "Auto Backshot: " .. (autoBackshot and "ON" or "OFF")
+end)

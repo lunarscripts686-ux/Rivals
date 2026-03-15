@@ -1,0 +1,1438 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ProximityPromptService = game:GetService("ProximityPromptService")
+local Workspace = game:GetService("Workspace")
+
+local player = Players.LocalPlayer
+local lp = player
+
+local lastGoodPosition = nil
+local lastGoodVelocity = nil
+local lagbackDetected = false
+local antiLagbackEnabled = true
+
+local function takeOwnership()
+    local char = lp.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp and hrp:IsA("BasePart") then
+        hrp:SetNetworkOwner(lp)
+    end
+end
+
+local function antiLagback()
+    if not antiLagbackEnabled then return end
+    local char = lp.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local currentPos = hrp.Position
+    local currentVel = hrp.AssemblyLinearVelocity
+    if tick() % 5 < 0.1 then takeOwnership() end
+    if lastGoodPosition then
+        local distMoved = (currentPos - lastGoodPosition).Magnitude
+        if distMoved > 100 and currentVel.Magnitude < 10 then
+            lagbackDetected = true
+            hrp.CFrame = CFrame.new(lastGoodPosition)
+            hrp.AssemblyLinearVelocity = lastGoodVelocity or Vector3.zero
+        elseif distMoved < 200 then
+            lastGoodPosition = currentPos
+            lastGoodVelocity = currentVel
+            lagbackDetected = false
+        end
+    else
+        lastGoodPosition = currentPos
+        lastGoodVelocity = currentVel
+    end
+    if currentVel.Magnitude > 95 then
+        hrp.AssemblyLinearVelocity = currentVel.Unit * 95
+    end
+end
+
+local autoLeftEnabled = false
+local autoRightEnabled = false
+local autoLeftSpeed = 60
+local autoRightSpeed = 60
+local autoLeftReturnSpeed = 30
+local autoRightReturnSpeed = 30
+
+local speedBoostEnabled = false
+local stealBoostEnabled = false
+local speedBoostValue = 55
+local stealBoostValue = 30
+local DEFAULT_WALKSPEED = 16
+
+local tpMode = "Off"
+local tpPositionLeft = Vector3.new(-477, -6, 94)
+local tpPositionRight = Vector3.new(-476, -7, 26)
+local alreadyTP = false
+
+local infinityEnabled = false
+local jumpForce = 50
+local fallLimit = 80
+
+local hoverEnabled = false
+local hoverHeight = 8
+
+local gravityEnabled = false
+local gravityStrength = 0.5
+
+local autoDodgeEnabled = false
+local dodgeRange = 15
+local dodgeJumpForce = 50
+local dodgeCooldown = 0.8
+local dodgeJumpDelay = 0.3
+local dodgeJumpCount = 2
+local lastDodgeTime = 0
+local isDodging = false
+
+local lockEnabled = false
+local lockTarget = nil
+local lockActive = false
+local lockSpeed = 50
+local lockJumpThreshold = 8
+local lockMaxRange = 40
+local previousPatrolMode = "none"
+
+local autoMedusaEnabled = false
+local medusaDistance = 17
+local medusaCooldown = 1
+local lastMedusaUse = 0
+local medusaTriggeredEnemies = {}
+local medusaActive = false
+
+local autoBatEnabled = false
+local batReach = 18
+
+local grabEnabled = false
+local grabRange = 20
+local grabLoop = nil
+local showGrabCircle = true
+local grabCircleObj = nil
+
+local antiRagdollEnabled = false
+local wasRagdolled = false
+
+local antiRespawnEnabled = false
+local characterLocked = false
+
+local rightWaypoints = {
+    Vector3.new(-473.04, -6.99, 29.71),
+    Vector3.new(-483.57, -5.10, 18.74),
+    Vector3.new(-475.00, -6.99, 26.43),
+    Vector3.new(-474.67, -6.94, 105.48),
+}
+local leftWaypoints = {
+    Vector3.new(-472.49, -7.00, 90.62),
+    Vector3.new(-484.62, -5.10, 100.37),
+    Vector3.new(-475.08, -7.00, 93.29),
+    Vector3.new(-474.22, -6.96, 16.18),
+}
+local patrolMode = "none"
+local currentWaypoint = 1
+local waitingAtWaypoint2 = false
+local PAUSE_AT_WAYPOINT_2 = 0.75
+local AUTO_START_DELAY = 0.7
+local waitingForCountdownLeft = false
+local waitingForCountdownRight = false
+
+local keybinds = {
+    autoLeft = "L",
+    autoRight = "R",
+    speedBoost = "S",
+    stealBoost = "C",
+    hover = "H",
+    gravity = "Y",
+    tpOnHit = "T",
+    infinityJump = "J",
+    autoDodge = "V",
+    lock = "X",
+    autoMedusa = "M",
+    autoBat = "B",
+    autoGrab = "G",
+    antiRagdoll = "K",
+    antiRespawn = "P",
+    toggleGUI = "Semicolon"
+}
+local waitingForKeybind = nil
+
+local circleVisibility = {
+    left = true,
+    right = true,
+    speed = true,
+    steal = true,
+    hover = true,
+    autoDodge = true,
+    lock = true,
+}
+
+local configFolder = "UltimateFocusSabConfig"
+
+local function saveConfig()
+    local data = {
+        autoLeftSpeed = autoLeftSpeed,
+        autoRightSpeed = autoRightSpeed,
+        autoLeftReturnSpeed = autoLeftReturnSpeed,
+        autoRightReturnSpeed = autoRightReturnSpeed,
+        speedBoostValue = speedBoostValue,
+        stealBoostValue = stealBoostValue,
+        batReach = batReach,
+        grabRange = grabRange,
+        tpMode = tpMode,
+        infinityEnabled = infinityEnabled,
+        hoverEnabled = hoverEnabled,
+        gravityEnabled = gravityEnabled,
+        gravityStrength = gravityStrength,
+        autoDodgeEnabled = autoDodgeEnabled,
+        dodgeRange = dodgeRange,
+        lockEnabled = lockEnabled,
+        jumpForce = jumpForce,
+        keybinds = keybinds,
+        circleVisibility = circleVisibility,
+    }
+    if not isfolder(configFolder) then makefolder(configFolder) end
+    local file = configFolder .. "/config.txt"
+    writefile(file, game:GetService("HttpService"):JSONEncode(data))
+    if saveBtn then
+        saveBtn.Text = "SAVED!"
+        saveBtn.BackgroundColor3 = Color3.fromRGB(40, 80, 40)
+        task.wait(1)
+        saveBtn.Text = "SAVE"
+        saveBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    end
+end
+
+local function loadConfig()
+    local file = configFolder .. "/config.txt"
+    if isfile(file) then
+        local success, data = pcall(function() return game:GetService("HttpService"):JSONDecode(readfile(file)) end)
+        if success then
+            autoLeftSpeed = data.autoLeftSpeed or 60
+            autoRightSpeed = data.autoRightSpeed or 60
+            autoLeftReturnSpeed = data.autoLeftReturnSpeed or 30
+            autoRightReturnSpeed = data.autoRightReturnSpeed or 30
+            speedBoostValue = data.speedBoostValue or 55
+            stealBoostValue = data.stealBoostValue or 30
+            batReach = data.batReach or 18
+            grabRange = data.grabRange or 20
+            tpMode = data.tpMode or "Off"
+            infinityEnabled = data.infinityEnabled or false
+            hoverEnabled = data.hoverEnabled or false
+            gravityEnabled = data.gravityEnabled or false
+            gravityStrength = data.gravityStrength or 0.5
+            autoDodgeEnabled = data.autoDodgeEnabled or false
+            dodgeRange = data.dodgeRange or 15
+            lockEnabled = data.lockEnabled or false
+            jumpForce = data.jumpForce or 50
+            if data.keybinds then for k, v in pairs(data.keybinds) do keybinds[k] = v end end
+            if data.circleVisibility then for k, v in pairs(data.circleVisibility) do circleVisibility[k] = v end end
+        end
+    end
+end
+loadConfig()
+
+local function getHRP()
+    local char = lp.Character
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+local function getHumanoid()
+    local char = lp.Character
+    return char and char:FindFirstChild("Humanoid")
+end
+local function updateSpeed()
+    local hum = getHumanoid()
+    if not hum then return end
+    if speedBoostEnabled then hum.WalkSpeed = speedBoostValue
+    elseif stealBoostEnabled then hum.WalkSpeed = stealBoostValue
+    else hum.WalkSpeed = DEFAULT_WALKSPEED end
+end
+
+local function getCurrentSpeed()
+    if patrolMode == "right" then
+        if currentWaypoint >= 3 then return autoRightReturnSpeed else return autoRightSpeed end
+    elseif patrolMode == "left" then
+        if currentWaypoint >= 3 then return autoLeftReturnSpeed else return autoLeftSpeed end
+    end
+    return 0
+end
+local function getCurrentWaypoints()
+    if patrolMode == "right" then return rightWaypoints
+    elseif patrolMode == "left" then return leftWaypoints
+    else return {} end
+end
+local function startMovement(mode)
+    patrolMode = mode
+    currentWaypoint = 1
+    waitingAtWaypoint2 = false
+end
+local function stopMovement()
+    patrolMode = "none"
+    currentWaypoint = 1
+    waitingAtWaypoint2 = false
+    waitingForCountdownLeft = false
+    waitingForCountdownRight = false
+    local char = lp.Character
+    if char then
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if root then root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y, 0) end
+    end
+end
+
+local function isCountdownNumber(text)
+    local num = tonumber(text)
+    return (num and num >= 1 and num <= 5), num
+end
+local function isTimerInCountdown(label)
+    if not label then return false end
+    local ok, num = isCountdownNumber(label.Text)
+    return ok and num >= 1 and num <= 5
+end
+
+local function performDodge()
+    if isDodging then return end
+    if tick() - lastDodgeTime < dodgeCooldown then return end
+    local hrp = getHRP()
+    if not hrp then return end
+    isDodging = true
+    lastDodgeTime = tick()
+    task.spawn(function()
+        for i = 1, dodgeJumpCount do
+            hrp.Velocity = Vector3.new(hrp.Velocity.X, dodgeJumpForce, hrp.Velocity.Z)
+            if i < dodgeJumpCount then task.wait(dodgeJumpDelay) end
+        end
+        task.wait(0.3)
+        isDodging = false
+    end)
+end
+local function getNearestThreat()
+    local hrp = getHRP()
+    if not hrp then return nil end
+    local nearest, minDist = nil, dodgeRange
+    for _, plr in pairs(Players:GetPlayers()) do
+        if plr ~= lp then
+            local char = plr.Character
+            if char and char:FindFirstChild("Humanoid") and char.Humanoid.Health > 0 then
+                local targetHRP = char:FindFirstChild("HumanoidRootPart")
+                if targetHRP then
+                    local dist = (hrp.Position - targetHRP.Position).Magnitude
+                    if dist < minDist then minDist = dist; nearest = plr end
+                end
+            end
+        end
+    end
+    return nearest, minDist
+end
+
+local function updateLock()
+    if not lockEnabled or not lockTarget then
+        lockActive = false
+        lockTarget = nil
+        return
+    end
+    local char = lp.Character
+    if not char then lockActive = false; return end
+    local hrp = getHRP()
+    if not hrp then return end
+    local targetChar = lockTarget.Character
+    if not targetChar or targetChar.Humanoid.Health <= 0 then
+        lockActive = false; lockTarget = nil; return
+    end
+    local targetHRP = targetChar:FindFirstChild("HumanoidRootPart")
+    if not targetHRP then lockActive = false; return end
+    local dist = (hrp.Position - targetHRP.Position).Magnitude
+    if dist > lockMaxRange then
+        lockActive = false; lockTarget = nil; return
+    end
+    if not lockActive then
+        previousPatrolMode = patrolMode
+        stopMovement()
+        lockActive = true
+    end
+    local direction = (targetHRP.Position - hrp.Position).Unit
+    hrp.AssemblyLinearVelocity = Vector3.new(
+        direction.X * lockSpeed,
+        hrp.AssemblyLinearVelocity.Y,
+        direction.Z * lockSpeed
+    )
+    if targetHRP.Position.Y > hrp.Position.Y + lockJumpThreshold then
+        hrp.Velocity = Vector3.new(hrp.Velocity.X, 50, hrp.Velocity.Z)
+    end
+end
+
+local function unequipBat()
+    local char = lp.Character; if not char then return end
+    for _, tool in pairs(char:GetChildren()) do
+        if tool:IsA("Tool") and (tool.Name:lower():find("bat") or tool.Name == "Bat") then
+            local backpack = lp:FindFirstChild("Backpack")
+            if backpack then tool.Parent = backpack end; break
+        end
+    end
+end
+local function unequipMedusa()
+    local char = lp.Character; if not char then return end
+    for _, tool in pairs(char:GetChildren()) do
+        if tool:IsA("Tool") and tool.Name:lower():find("medusa") then
+            local backpack = lp:FindFirstChild("Backpack")
+            if backpack then tool.Parent = backpack end
+            medusaActive = false; break
+        end
+    end
+end
+local function findMedusaTool()
+    local char = lp.Character; if not char then return nil end
+    for _, tool in pairs(char:GetChildren()) do
+        if tool:IsA("Tool") and tool.Name:lower():find("medusa") then return tool end
+    end
+    local backpack = lp:FindFirstChild("Backpack")
+    if backpack then
+        for _, tool in pairs(backpack:GetChildren()) do
+            if tool:IsA("Tool") and tool.Name:lower():find("medusa") then return tool end
+        end
+    end
+    return nil
+end
+local function getNearestEnemy()
+    local hrp = getHRP(); if not hrp then return nil end
+    local nearest, minDist = nil, medusaDistance
+    for _, plr in pairs(Players:GetPlayers()) do
+        if plr ~= lp then
+            local char = plr.Character
+            if char then
+                local targetHRP = char:FindFirstChild("HumanoidRootPart")
+                if targetHRP then
+                    local dist = (hrp.Position - targetHRP.Position).Magnitude
+                    if dist < minDist then minDist = dist; nearest = plr end
+                end
+            end
+        end
+    end
+    return nearest, minDist
+end
+local function activateMedusa()
+    if not autoMedusaEnabled or medusaActive then return end
+    local now = tick()
+    if now - lastMedusaUse < medusaCooldown then return end
+    local medusaTool = findMedusaTool()
+    if medusaTool then
+        unequipBat()
+        if medusaTool.Parent == lp.Backpack then
+            local hum = getHumanoid()
+            if hum then hum:EquipTool(medusaTool); medusaActive = true end
+        end
+        task.wait(0.1)
+        medusaTool:Activate()
+        lastMedusaUse = now
+        task.wait(0.5)
+        unequipMedusa()
+    end
+end
+
+local function findBat()
+    if medusaActive then return nil end
+    local char = lp.Character; if not char then return nil end
+    for _, tool in pairs(char:GetChildren()) do
+        if tool:IsA("Tool") and (tool.Name:lower():find("bat") or tool.Name == "Bat") then return tool end
+    end
+    local backpack = lp:FindFirstChild("Backpack")
+    if backpack then
+        for _, tool in pairs(backpack:GetChildren()) do
+            if tool:IsA("Tool") and (tool.Name:lower():find("bat") or tool.Name == "Bat") then return tool end
+        end
+    end
+    return nil
+end
+local function equipBat(bat)
+    if not bat or medusaActive then return false end
+    if bat.Parent == lp.Character then return true end
+    if bat.Parent == lp.Backpack then
+        local hum = getHumanoid()
+        if hum then hum:EquipTool(bat); return true end
+    end
+    return false
+end
+local function getNearestPlayerForBat()
+    local hrp = getHRP(); if not hrp then return nil end
+    local nearest, minDist = nil, batReach
+    for _, plr in pairs(Players:GetPlayers()) do
+        if plr ~= lp then
+            local char = plr.Character
+            if char and char:FindFirstChild("Humanoid") and char.Humanoid.Health > 0 then
+                local targetHRP = char:FindFirstChild("HumanoidRootPart")
+                if targetHRP then
+                    local dist = (hrp.Position - targetHRP.Position).Magnitude
+                    if dist < minDist then minDist = dist; nearest = plr end
+                end
+            end
+        end
+    end
+    return nearest, minDist
+end
+
+local function getPromptPart(prompt)
+    local p = prompt.Parent
+    if p:IsA("BasePart") then return p end
+    if p:IsA("Model") then return p.PrimaryPart or p:FindFirstChildWhichIsA("BasePart") end
+    if p:IsA("Attachment") then return p.Parent end
+    return p:FindFirstChildWhichIsA("BasePart", true)
+end
+local function findStealPrompt()
+    local hrp = getHRP(); if not hrp then return end
+    local nearest, minDist = nil, math.huge
+    local plots = workspace:FindFirstChild("Plots")
+    if not plots then return end
+    for _, desc in pairs(plots:GetDescendants()) do
+        if desc:IsA("ProximityPrompt") and desc.Enabled and desc.ActionText == "Steal" then
+            local part = getPromptPart(desc)
+            if part then
+                local d = (hrp.Position - part.Position).Magnitude
+                if d < minDist then minDist = d; nearest = desc end
+            end
+        end
+    end
+    return nearest, minDist
+end
+local function makePromptsVisible()
+    local plots = workspace:FindFirstChild("Plots")
+    if not plots then return end
+    for _, desc in pairs(plots:GetDescendants()) do
+        if desc:IsA("ProximityPrompt") and desc.ActionText == "Steal" then
+            desc.MaxActivationDistance = 9e9
+            desc.RequiresLineOfSight = false
+            desc.ClickablePrompt = true
+        end
+    end
+end
+local function triggerPrompt(prompt)
+    if not prompt or not prompt:IsDescendantOf(workspace) then return end
+    prompt.MaxActivationDistance = 9e9
+    prompt.RequiresLineOfSight = false
+    prompt.ClickablePrompt = true
+    local ok = pcall(fireproximityprompt, prompt, 9e9, 0)
+    if not ok then
+        pcall(function() prompt:InputHoldBegin(); task.wait(0); prompt:InputHoldEnd() end)
+    end
+end
+local function createGrabCircle()
+    if grabCircleObj then grabCircleObj:Destroy(); grabCircleObj = nil end
+    if not showGrabCircle or not grabEnabled then return end
+    local char = lp.Character; if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
+    local circle = Instance.new("Part")
+    circle.Size = Vector3.new(grabRange * 2, 0.2, grabRange * 2)
+    circle.Position = hrp.Position
+    circle.Anchored = true; circle.CanCollide = false; circle.Transparency = 0.7
+    circle.BrickColor = BrickColor.new("Really blue"); circle.Material = Enum.Material.Neon
+    circle.Parent = workspace; circle.Name = "GrabRangeCircle"
+    grabCircleObj = circle
+    coroutine.wrap(function()
+        while grabCircleObj and grabEnabled do
+            local newHrp = getHRP()
+            if newHrp then grabCircleObj.Position = newHrp.Position end
+            task.wait(0.1)
+        end
+    end)()
+end
+local function startGrab()
+    if grabLoop then grabLoop:Disconnect() end
+    makePromptsVisible()
+    createGrabCircle()
+    grabLoop = RunService.Heartbeat:Connect(function()
+        if not grabEnabled then return end
+        local prompt, dist = findStealPrompt()
+        if prompt and dist <= grabRange then triggerPrompt(prompt) end
+    end)
+end
+local function stopGrab()
+    if grabLoop then grabLoop:Disconnect(); grabLoop = nil end
+    if grabCircleObj then grabCircleObj:Destroy(); grabCircleObj = nil end
+end
+
+local function isRagdolled(char)
+    local hum = char and char:FindFirstChild("Humanoid")
+    if not hum then return false end
+    local state = hum:GetState()
+    return state == Enum.HumanoidStateType.Physics
+        or state == Enum.HumanoidStateType.Ragdoll
+        or state == Enum.HumanoidStateType.FallingDown
+        or hum.PlatformStand == true
+end
+local function fullyRecoverFromRagdoll()
+    local char = lp.Character
+    if not char then return end
+    local hum = char:FindFirstChild("Humanoid")
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hum or not hrp then return end
+    for i = 1, 3 do
+        hum:ChangeState(Enum.HumanoidStateType.Running)
+        task.wait(0.03)
+    end
+    hum.PlatformStand = false
+    hum.Sit = false
+    hum.AutoRotate = true
+    hum.WalkSpeed = DEFAULT_WALKSPEED
+    hum.JumpPower = 50
+    hum.HipHeight = 0
+    for _, v in pairs(char:GetDescendants()) do
+        if v:IsA("Motor6D") and not v.Enabled then v.Enabled = true end
+    end
+    for _, v in pairs(char:GetDescendants()) do
+        if v:IsA("Constraint") and (v.Name:lower():find("rag") or v.Name:lower():find("doll")) then
+            v:Destroy()
+        end
+        if v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") then
+            v:Destroy()
+        end
+    end
+    for _, part in pairs(char:GetChildren()) do
+        if part:IsA("BasePart") then
+            part.Velocity = Vector3.zero
+            part.RotVelocity = Vector3.zero
+            part.AssemblyLinearVelocity = Vector3.zero
+            part.AssemblyAngularVelocity = Vector3.zero
+            part.Anchored = false
+        end
+    end
+    hrp.Velocity = Vector3.new(0, 8, 0)
+    pcall(function()
+        local module = lp:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule")
+        require(module):GetControls():Enable()
+    end)
+    if workspace.CurrentCamera then workspace.CurrentCamera.CameraSubject = hum end
+    task.spawn(function()
+        task.wait(0.1)
+        if hum and hum.Parent then
+            hum.WalkSpeed = DEFAULT_WALKSPEED
+            hum.JumpPower = 50
+        end
+    end)
+end
+
+local function preventRespawn()
+    if not antiRespawnEnabled then return end
+    local char = lp.Character
+    if not char then
+        local newChar = Instance.new("Model"); newChar.Name = "Character"; newChar.Parent = workspace
+        local hrp = Instance.new("Part"); hrp.Name = "HumanoidRootPart"; hrp.Anchored = true; hrp.Parent = newChar
+        local hum = Instance.new("Humanoid"); hum.Parent = newChar
+        lp.Character = newChar
+        characterLocked = true
+    end
+end
+
+local function updateWalking()
+    local char = lp.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChild("Humanoid")
+    if not root or not hum then return end
+    local currentVel = root.AssemblyLinearVelocity
+    if hoverEnabled then
+        local raycastParams = RaycastParams.new()
+        raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+        raycastParams.FilterDescendantsInstances = {char}
+        local raycastResult = workspace:Raycast(root.Position, Vector3.new(0, -50, 0), raycastParams)
+        if raycastResult then
+            local groundY = raycastResult.Position.Y
+            local targetY = groundY + hoverHeight
+            local currentY = root.Position.Y
+            local yDifference = targetY - currentY
+            if math.abs(yDifference) > 0.3 then
+                root.AssemblyLinearVelocity = Vector3.new(currentVel.X, yDifference * 15, currentVel.Z)
+            else
+                root.AssemblyLinearVelocity = Vector3.new(currentVel.X, 0, currentVel.Z)
+            end
+        end
+    end
+    if gravityEnabled and not hoverEnabled then
+        if currentVel.Y < -2 then
+            root.AssemblyLinearVelocity = Vector3.new(currentVel.X, currentVel.Y * gravityStrength, currentVel.Z)
+        end
+        if currentVel.Y < -50 then
+            root.AssemblyLinearVelocity = Vector3.new(currentVel.X, -50, currentVel.Z)
+        end
+    end
+    if patrolMode ~= "none" and not lockActive then
+        local waypoints = getCurrentWaypoints()
+        local targetPos = waypoints[currentWaypoint]
+        local currentPos = root.Position
+        local targetXZ = Vector3.new(targetPos.X, 0, targetPos.Z)
+        local currentXZ = Vector3.new(currentPos.X, 0, currentPos.Z)
+        local distanceXZ = (targetXZ - currentXZ).Magnitude
+        if distanceXZ > 3 then
+            local moveDirection = (targetXZ - currentXZ).Unit
+            local currentSpeed = getCurrentSpeed()
+            root.AssemblyLinearVelocity = Vector3.new(
+                moveDirection.X * currentSpeed,
+                root.AssemblyLinearVelocity.Y,
+                moveDirection.Z * currentSpeed
+            )
+        else
+            if currentWaypoint == 2 and not waitingAtWaypoint2 then
+                waitingAtWaypoint2 = true
+                root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
+                task.spawn(function()
+                    task.wait(PAUSE_AT_WAYPOINT_2)
+                    if patrolMode ~= "none" and currentWaypoint == 2 then
+                        currentWaypoint = 3
+                        waitingAtWaypoint2 = false
+                    end
+                end)
+            elseif currentWaypoint == 2 and waitingAtWaypoint2 then
+                root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
+            elseif currentWaypoint == #waypoints then
+                stopMovement()
+            else
+                currentWaypoint = currentWaypoint + 1
+            end
+        end
+    end
+end
+
+RunService.Heartbeat:Connect(function()
+    local char = lp.Character
+    if not char then return end
+    local hrp = getHRP()
+    local hum = getHumanoid()
+    antiLagback()
+    updateWalking()
+    updateSpeed()
+    if autoDodgeEnabled and not isDodging then
+        local threat, dist = getNearestThreat()
+        if threat and dist <= dodgeRange then performDodge() end
+    end
+    if lockEnabled and lockTarget then
+        updateLock()
+    end
+    if autoMedusaEnabled then
+        local enemy = getNearestEnemy()
+        if enemy and enemy.Character then
+            if not medusaTriggeredEnemies[enemy] then
+                medusaTriggeredEnemies[enemy] = true
+                task.spawn(function() task.wait(0.1); activateMedusa(); task.wait(2); medusaTriggeredEnemies[enemy] = false end)
+            end
+        end
+    end
+    if autoBatEnabled and not medusaActive then
+        local bat = findBat()
+        local target = getNearestPlayerForBat()
+        if bat and target and target.Character then
+            equipBat(bat)
+            bat:Activate()
+        end
+    end
+    if char then
+        local ragdollNow = isRagdolled(char)
+        if ragdollNow and not wasRagdolled and not alreadyTP then
+            if tpMode ~= "Off" then
+                alreadyTP = true
+                task.spawn(function()
+                    task.wait(0.15)
+                    local c = lp.Character
+                    if not c then alreadyTP = false return end
+                    for _, v in pairs(c:GetDescendants()) do
+                        if v:IsA("BasePart") then
+                            v.AssemblyLinearVelocity = Vector3.zero
+                            v.AssemblyAngularVelocity = Vector3.zero
+                        end
+                    end
+                    local dest = (tpMode == "Left") and tpPositionLeft or tpPositionRight
+                    c:PivotTo(CFrame.new(dest + Vector3.new(0, 3, 0)))
+                    task.wait(1.5)
+                    alreadyTP = false
+                end)
+            end
+            if antiRagdollEnabled and hum then
+                task.spawn(function() task.wait(0.05); fullyRecoverFromRagdoll() end)
+            end
+        end
+        wasRagdolled = ragdollNow
+    end
+    if antiRespawnEnabled then preventRespawn() end
+end)
+
+UserInputService.JumpRequest:Connect(function()
+    if not infinityEnabled then return end
+    local hrp = getHRP()
+    if hrp then
+        hrp.Velocity = Vector3.new(hrp.Velocity.X, jumpForce, hrp.Velocity.Z)
+    end
+end)
+
+lp.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    wasRagdolled = false; medusaActive = false; alreadyTP = false
+    if antiRespawnEnabled and characterLocked then characterLocked = false end
+    if grabEnabled then createGrabCircle() end
+    fullyRecoverFromRagdoll()
+end)
+
+local function onTextChanged(label)
+    local text = label.Text
+    local ok, number = isCountdownNumber(text)
+    if ok and number == 1 then
+        if waitingForCountdownLeft then
+            task.wait(AUTO_START_DELAY); waitingForCountdownLeft = false; startMovement("left")
+        end
+        if waitingForCountdownRight then
+            task.wait(AUTO_START_DELAY); waitingForCountdownRight = false; startMovement("right")
+        end
+    end
+end
+spawn(function()
+    local success, label = pcall(function()
+        return player.PlayerGui
+            :FindFirstChild("DuelsMachineTopFrame")
+            and player.PlayerGui.DuelsMachineTopFrame
+            :FindFirstChild("DuelsMachineTopFrame")
+            and player.PlayerGui.DuelsMachineTopFrame.DuelsMachineTopFrame
+            :FindFirstChild("Timer")
+            and player.PlayerGui.DuelsMachineTopFrame.DuelsMachineTopFrame.Timer
+            :FindFirstChild("Label")
+    end)
+    if success and label then
+        onTextChanged(label)
+        label:GetPropertyChangedSignal("Text"):Connect(function() onTextChanged(label) end)
+    end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if waitingForKeybind then
+        local key = input.KeyCode
+        if key ~= Enum.KeyCode.Unknown then
+            keybinds[waitingForKeybind] = key.Name
+            waitingForKeybind = nil
+            updateKeybindButtons()
+        end
+        return
+    end
+    for feature, key in pairs(keybinds) do
+        if input.KeyCode.Name == key then
+            if feature == "autoLeft" then
+                if patrolMode == "left" then stopMovement(); if leftCircle then leftCircle.BackgroundColor3 = Color3.fromRGB(10,10,10) end
+                else stopMovement(); startMovement("left"); if leftCircle then leftCircle.BackgroundColor3 = Color3.fromRGB(40,80,40) end end
+            elseif feature == "autoRight" then
+                if patrolMode == "right" then stopMovement(); if rightCircle then rightCircle.BackgroundColor3 = Color3.fromRGB(10,10,10) end
+                else stopMovement(); startMovement("right"); if rightCircle then rightCircle.BackgroundColor3 = Color3.fromRGB(80,40,40) end end
+            elseif feature == "speedBoost" then
+                speedBoostEnabled = not speedBoostEnabled
+                if speedBoostEnabled then stealBoostEnabled = false end
+                if speedCircle then speedCircle.BackgroundColor3 = speedBoostEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(10,10,10); speedText.TextColor3 = speedBoostEnabled and Color3.fromRGB(100,255,100) or Color3.fromRGB(255,255,255) end
+                if stealCircle and not speedBoostEnabled then stealCircle.BackgroundColor3 = Color3.fromRGB(10,10,10); stealText.TextColor3 = Color3.fromRGB(255,255,255) end
+                updateSpeed()
+            elseif feature == "stealBoost" then
+                stealBoostEnabled = not stealBoostEnabled
+                if stealBoostEnabled then speedBoostEnabled = false end
+                if stealCircle then stealCircle.BackgroundColor3 = stealBoostEnabled and Color3.fromRGB(80,40,40) or Color3.fromRGB(10,10,10); stealText.TextColor3 = stealBoostEnabled and Color3.fromRGB(255,100,100) or Color3.fromRGB(255,255,255) end
+                if speedCircle and not stealBoostEnabled then speedCircle.BackgroundColor3 = Color3.fromRGB(10,10,10); speedText.TextColor3 = Color3.fromRGB(255,255,255) end
+                updateSpeed()
+            elseif feature == "hover" then
+                hoverEnabled = not hoverEnabled
+                if hoverCircle then hoverCircle.BackgroundColor3 = hoverEnabled and Color3.fromRGB(100,100,255) or Color3.fromRGB(10,10,10); hoverText.TextColor3 = hoverEnabled and Color3.fromRGB(200,200,255) or Color3.fromRGB(255,255,255) end
+            elseif feature == "gravity" then
+                gravityEnabled = not gravityEnabled
+                if gravBtn then gravBtn.BackgroundColor3 = gravityEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45) end
+            elseif feature == "tpOnHit" then
+                if tpMode == "Off" then tpMode = "Left" elseif tpMode == "Left" then tpMode = "Right" else tpMode = "Off" end
+                if tpBtn then tpBtn.Text = "TP ON HIT: "..tpMode; tpBtn.BackgroundColor3 = tpMode ~= "Off" and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45) end
+            elseif feature == "infinityJump" then
+                infinityEnabled = not infinityEnabled
+                if infBtn then infBtn.Text = infinityEnabled and "INF JUMP ON" or "INF JUMP OFF"; infBtn.BackgroundColor3 = infinityEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45) end
+            elseif feature == "autoDodge" then
+                autoDodgeEnabled = not autoDodgeEnabled
+                if autoDodgeCircle then autoDodgeCircle.BackgroundColor3 = autoDodgeEnabled and Color3.fromRGB(255,200,0) or Color3.fromRGB(10,10,10); autoDodgeText.TextColor3 = autoDodgeEnabled and Color3.fromRGB(255,255,100) or Color3.fromRGB(255,255,255) end
+            elseif feature == "lock" then
+                lockEnabled = not lockEnabled
+                if not lockEnabled then lockActive = false; lockTarget = nil
+                    if previousPatrolMode ~= "none" then startMovement(previousPatrolMode) end
+                end
+                if lockCircle then lockCircle.BackgroundColor3 = lockEnabled and Color3.fromRGB(0,150,255) or Color3.fromRGB(10,10,10); lockText.TextColor3 = lockEnabled and Color3.fromRGB(150,150,255) or Color3.fromRGB(255,255,255) end
+            elseif feature == "autoMedusa" then
+                autoMedusaEnabled = not autoMedusaEnabled
+                if not autoMedusaEnabled then medusaTriggeredEnemies = {} end
+                if medusaBtn then medusaBtn.BackgroundColor3 = autoMedusaEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45) end
+            elseif feature == "autoBat" then
+                autoBatEnabled = not autoBatEnabled
+                if batBtn then batBtn.BackgroundColor3 = autoBatEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45) end
+            elseif feature == "autoGrab" then
+                grabEnabled = not grabEnabled
+                if grabBtn then grabBtn.BackgroundColor3 = grabEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45) end
+                if grabEnabled then startGrab() else stopGrab() end
+            elseif feature == "antiRagdoll" then
+                antiRagdollEnabled = not antiRagdollEnabled
+                if antiBtn then antiBtn.BackgroundColor3 = antiRagdollEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45) end
+            elseif feature == "antiRespawn" then
+                antiRespawnEnabled = not antiRespawnEnabled
+                if respawnBtn then respawnBtn.BackgroundColor3 = antiRespawnEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45) end
+            elseif feature == "toggleGUI" then
+                if mainFrame then mainFrame.Visible = not mainFrame.Visible end
+            end
+        end
+    end
+end)
+
+local sg = Instance.new("ScreenGui")
+sg.Name = "UltimateFocusSab"
+sg.Parent = player:WaitForChild("PlayerGui")
+sg.ResetOnSpawn = false
+sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+sg.IgnoreGuiInset = true
+
+local starCircle = Instance.new("ImageButton")
+starCircle.Name = "StarCircle"
+starCircle.Size = UDim2.new(0, 55, 0, 55)
+starCircle.Position = UDim2.new(0.5, -27, 0.5, -27)
+starCircle.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+starCircle.BackgroundTransparency = 0
+starCircle.Image = "rbxassetid://6023426919"
+starCircle.ImageColor3 = Color3.fromRGB(255, 215, 0)
+starCircle.Parent = sg
+starCircle.ZIndex = 999
+starCircle.Active = true
+starCircle.Draggable = true
+local starCorner = Instance.new("UICorner"); starCorner.CornerRadius = UDim.new(1,0); starCorner.Parent = starCircle
+local starStroke = Instance.new("UIStroke"); starStroke.Thickness = 3; starStroke.Color = Color3.fromRGB(255,215,0); starStroke.Parent = starCircle
+
+local xButton = Instance.new("TextButton")
+xButton.Name = "XButton"
+xButton.Size = UDim2.new(0, 30, 0, 30)
+xButton.Position = UDim2.new(0, 10, 0, 10)
+xButton.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+xButton.Text = "X"
+xButton.TextColor3 = Color3.fromRGB(255,255,255)
+xButton.TextSize = 18
+xButton.Font = Enum.Font.GothamBold
+xButton.Parent = sg
+xButton.ZIndex = 999
+xButton.Active = true
+xButton.Draggable = true
+local xCorner = Instance.new("UICorner"); xCorner.CornerRadius = UDim.new(1,0); xCorner.Parent = xButton
+local xStroke = Instance.new("UIStroke"); xStroke.Thickness = 2; xStroke.Color = Color3.fromRGB(255,255,255); xStroke.Parent = xButton
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 350, 0, 350)
+mainFrame.Position = UDim2.new(0.5, -175, 0.5, -175)
+mainFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+mainFrame.BackgroundTransparency = 0.1
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Visible = false
+mainFrame.Parent = sg
+local mainCorner = Instance.new("UICorner"); mainCorner.CornerRadius = UDim.new(0,12); mainCorner.Parent = mainFrame
+local mainStroke = Instance.new("UIStroke"); mainStroke.Thickness = 2.5; mainStroke.Color = Color3.fromRGB(255,215,0); mainStroke.Parent = mainFrame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1,0,0,35); title.Position = UDim2.new(0,0,0,5); title.BackgroundTransparency = 1
+title.Text = "FOCUS DUELS"; title.TextColor3 = Color3.fromRGB(255,255,255); title.TextSize = 20; title.Font = Enum.Font.GothamBold; title.Parent = mainFrame
+
+local mainTabBtn = Instance.new("TextButton")
+mainTabBtn.Size = UDim2.new(0.22,-3,0,30); mainTabBtn.Position = UDim2.new(0.02,0,0,45)
+mainTabBtn.BackgroundColor3 = Color3.fromRGB(40,80,40); mainTabBtn.Text = "MAIN"; mainTabBtn.TextColor3 = Color3.fromRGB(255,255,255)
+mainTabBtn.TextSize = 12; mainTabBtn.Font = Enum.Font.GothamBold; mainTabBtn.Parent = mainFrame; Instance.new("UICorner", mainTabBtn).CornerRadius = UDim.new(0,6)
+
+local speedTabBtn = Instance.new("TextButton")
+speedTabBtn.Size = UDim2.new(0.22,-3,0,30); speedTabBtn.Position = UDim2.new(0.26,0,0,45)
+speedTabBtn.BackgroundColor3 = Color3.fromRGB(45,45,45); speedTabBtn.Text = "SPEED"; speedTabBtn.TextColor3 = Color3.fromRGB(255,255,255)
+speedTabBtn.TextSize = 12; speedTabBtn.Font = Enum.Font.GothamBold; speedTabBtn.Parent = mainFrame; Instance.new("UICorner", speedTabBtn).CornerRadius = UDim.new(0,6)
+
+local keybindTabBtn = Instance.new("TextButton")
+keybindTabBtn.Size = UDim2.new(0.22,-3,0,30); keybindTabBtn.Position = UDim2.new(0.50,0,0,45)
+keybindTabBtn.BackgroundColor3 = Color3.fromRGB(45,45,45); keybindTabBtn.Text = "KEYBINDS"; keybindTabBtn.TextColor3 = Color3.fromRGB(255,255,255)
+keybindTabBtn.TextSize = 12; keybindTabBtn.Font = Enum.Font.GothamBold; keybindTabBtn.Parent = mainFrame; Instance.new("UICorner", keybindTabBtn).CornerRadius = UDim.new(0,6)
+
+local mobileTabBtn = Instance.new("TextButton")
+mobileTabBtn.Size = UDim2.new(0.22,-3,0,30); mobileTabBtn.Position = UDim2.new(0.74,0,0,45)
+mobileTabBtn.BackgroundColor3 = Color3.fromRGB(45,45,45); mobileTabBtn.Text = "MOBILE"; mobileTabBtn.TextColor3 = Color3.fromRGB(255,255,255)
+mobileTabBtn.TextSize = 12; mobileTabBtn.Font = Enum.Font.GothamBold; mobileTabBtn.Parent = mainFrame; Instance.new("UICorner", mobileTabBtn).CornerRadius = UDim.new(0,6)
+
+local mainContainer = Instance.new("ScrollingFrame")
+mainContainer.Size = UDim2.new(1,-20,1,-100); mainContainer.Position = UDim2.new(0,10,0,85)
+mainContainer.BackgroundTransparency = 1; mainContainer.BorderSizePixel = 0; mainContainer.ScrollBarThickness = 6
+mainContainer.CanvasSize = UDim2.new(0,0,0,0); mainContainer.Parent = mainFrame; mainContainer.Visible = true
+
+local speedContainer = Instance.new("ScrollingFrame")
+speedContainer.Size = UDim2.new(1,-20,1,-100); speedContainer.Position = UDim2.new(0,10,0,85)
+speedContainer.BackgroundTransparency = 1; speedContainer.BorderSizePixel = 0; speedContainer.ScrollBarThickness = 6
+speedContainer.CanvasSize = UDim2.new(0,0,0,0); speedContainer.Parent = mainFrame; speedContainer.Visible = false
+
+local keybindContainer = Instance.new("ScrollingFrame")
+keybindContainer.Size = UDim2.new(1,-20,1,-100); keybindContainer.Position = UDim2.new(0,10,0,85)
+keybindContainer.BackgroundTransparency = 1; keybindContainer.BorderSizePixel = 0; keybindContainer.ScrollBarThickness = 6
+keybindContainer.CanvasSize = UDim2.new(0,0,0,0); keybindContainer.Parent = mainFrame; keybindContainer.Visible = false
+
+local mobileContainer = Instance.new("ScrollingFrame")
+mobileContainer.Size = UDim2.new(1,-20,1,-100); mobileContainer.Position = UDim2.new(0,10,0,85)
+mobileContainer.BackgroundTransparency = 1; mobileContainer.BorderSizePixel = 0; mobileContainer.ScrollBarThickness = 6
+mobileContainer.CanvasSize = UDim2.new(0,0,0,0); mobileContainer.Parent = mainFrame; mobileContainer.Visible = false
+
+local mainLayout = Instance.new("UIListLayout"); mainLayout.Parent = mainContainer; mainLayout.SortOrder = Enum.SortOrder.LayoutOrder; mainLayout.Padding = UDim.new(0,8)
+local speedLayout = Instance.new("UIListLayout"); speedLayout.Parent = speedContainer; speedLayout.SortOrder = Enum.SortOrder.LayoutOrder; speedLayout.Padding = UDim.new(0,8)
+local keybindLayout = Instance.new("UIListLayout"); keybindLayout.Parent = keybindContainer; keybindLayout.SortOrder = Enum.SortOrder.LayoutOrder; keybindLayout.Padding = UDim.new(0,8)
+local mobileLayout = Instance.new("UIListLayout"); mobileLayout.Parent = mobileContainer; mobileLayout.SortOrder = Enum.SortOrder.LayoutOrder; mobileLayout.Padding = UDim.new(0,8)
+
+mainTabBtn.MouseButton1Click:Connect(function()
+    mainContainer.Visible = true; speedContainer.Visible = false; keybindContainer.Visible = false; mobileContainer.Visible = false
+    mainTabBtn.BackgroundColor3 = Color3.fromRGB(40,80,40); speedTabBtn.BackgroundColor3 = Color3.fromRGB(45,45,45); keybindTabBtn.BackgroundColor3 = Color3.fromRGB(45,45,45); mobileTabBtn.BackgroundColor3 = Color3.fromRGB(45,45,45)
+end)
+speedTabBtn.MouseButton1Click:Connect(function()
+    mainContainer.Visible = false; speedContainer.Visible = true; keybindContainer.Visible = false; mobileContainer.Visible = false
+    mainTabBtn.BackgroundColor3 = Color3.fromRGB(45,45,45); speedTabBtn.BackgroundColor3 = Color3.fromRGB(40,80,40); keybindTabBtn.BackgroundColor3 = Color3.fromRGB(45,45,45); mobileTabBtn.BackgroundColor3 = Color3.fromRGB(45,45,45)
+end)
+keybindTabBtn.MouseButton1Click:Connect(function()
+    mainContainer.Visible = false; speedContainer.Visible = false; keybindContainer.Visible = true; mobileContainer.Visible = false
+    mainTabBtn.BackgroundColor3 = Color3.fromRGB(45,45,45); speedTabBtn.BackgroundColor3 = Color3.fromRGB(45,45,45); keybindTabBtn.BackgroundColor3 = Color3.fromRGB(40,80,40); mobileTabBtn.BackgroundColor3 = Color3.fromRGB(45,45,45)
+end)
+mobileTabBtn.MouseButton1Click:Connect(function()
+    mainContainer.Visible = false; speedContainer.Visible = false; keybindContainer.Visible = false; mobileContainer.Visible = true
+    mainTabBtn.BackgroundColor3 = Color3.fromRGB(45,45,45); speedTabBtn.BackgroundColor3 = Color3.fromRGB(45,45,45); keybindTabBtn.BackgroundColor3 = Color3.fromRGB(45,45,45); mobileTabBtn.BackgroundColor3 = Color3.fromRGB(40,80,40)
+end)
+
+xButton.MouseButton1Click:Connect(function() starCircle.Visible = not starCircle.Visible end)
+starCircle.MouseButton1Click:Connect(function() mainFrame.Visible = not mainFrame.Visible end)
+
+local leftCircle = Instance.new("ImageButton")
+leftCircle.Size = UDim2.new(0,55,0,55); leftCircle.Position = UDim2.new(0.25,-27,0,15)
+leftCircle.BackgroundColor3 = Color3.fromRGB(10,10,10); leftCircle.BackgroundTransparency = 0; leftCircle.Image = ""
+leftCircle.Parent = sg; leftCircle.ZIndex = 10; leftCircle.Active = true; leftCircle.Draggable = false
+leftCircle.Visible = circleVisibility.left
+local leftCorner = Instance.new("UICorner"); leftCorner.CornerRadius = UDim.new(1,0); leftCorner.Parent = leftCircle
+local leftStroke = Instance.new("UIStroke"); leftStroke.Thickness = 3; leftStroke.Color = Color3.fromRGB(100,255,100); leftStroke.Parent = leftCircle
+local leftText = Instance.new("TextLabel"); leftText.Size = UDim2.new(1,0,1,0); leftText.BackgroundTransparency = 1; leftText.Text = "L"; leftText.TextColor3 = Color3.fromRGB(255,255,255); leftText.TextSize = 24; leftText.Font = Enum.Font.GothamBold; leftText.Parent = leftCircle
+
+local rightCircle = Instance.new("ImageButton")
+rightCircle.Size = UDim2.new(0,55,0,55); rightCircle.Position = UDim2.new(0.75,-27,0,15)
+rightCircle.BackgroundColor3 = Color3.fromRGB(10,10,10); rightCircle.BackgroundTransparency = 0; rightCircle.Image = ""
+rightCircle.Parent = sg; rightCircle.ZIndex = 10; rightCircle.Active = true; rightCircle.Draggable = false
+rightCircle.Visible = circleVisibility.right
+local rightCorner = Instance.new("UICorner"); rightCorner.CornerRadius = UDim.new(1,0); rightCorner.Parent = rightCircle
+local rightStroke = Instance.new("UIStroke"); rightStroke.Thickness = 3; rightStroke.Color = Color3.fromRGB(255,100,100); rightStroke.Parent = rightCircle
+local rightText = Instance.new("TextLabel"); rightText.Size = UDim2.new(1,0,1,0); rightText.BackgroundTransparency = 1; rightText.Text = "R"; rightText.TextColor3 = Color3.fromRGB(255,255,255); rightText.TextSize = 24; rightText.Font = Enum.Font.GothamBold; rightText.Parent = rightCircle
+
+local speedCircle = Instance.new("ImageButton")
+speedCircle.Size = UDim2.new(0,50,0,50); speedCircle.Position = UDim2.new(0.4,-25,0,17)
+speedCircle.BackgroundColor3 = Color3.fromRGB(10,10,10); speedCircle.BackgroundTransparency = 0; speedCircle.Image = ""
+speedCircle.Parent = sg; speedCircle.ZIndex = 10; speedCircle.Active = true; speedCircle.Draggable = false
+speedCircle.Visible = circleVisibility.speed
+local speedCorner = Instance.new("UICorner"); speedCorner.CornerRadius = UDim.new(1,0); speedCorner.Parent = speedCircle
+local speedStroke = Instance.new("UIStroke"); speedStroke.Thickness = 3; speedStroke.Color = Color3.fromRGB(100,255,100); speedStroke.Parent = speedCircle
+local speedText = Instance.new("TextLabel"); speedText.Size = UDim2.new(1,0,1,-5); speedText.Position = UDim2.new(0,0,0,-2); speedText.BackgroundTransparency = 1; speedText.Text = "SPD"; speedText.TextColor3 = Color3.fromRGB(255,255,255); speedText.TextSize = 16; speedText.Font = Enum.Font.GothamBold; speedText.Parent = speedCircle
+
+local stealCircle = Instance.new("ImageButton")
+stealCircle.Size = UDim2.new(0,50,0,50); stealCircle.Position = UDim2.new(0.6,-25,0,17)
+stealCircle.BackgroundColor3 = Color3.fromRGB(10,10,10); stealCircle.BackgroundTransparency = 0; stealCircle.Image = ""
+stealCircle.Parent = sg; stealCircle.ZIndex = 10; stealCircle.Active = true; stealCircle.Draggable = false
+stealCircle.Visible = circleVisibility.steal
+local stealCorner = Instance.new("UICorner"); stealCorner.CornerRadius = UDim.new(1,0); stealCorner.Parent = stealCircle
+local stealStroke = Instance.new("UIStroke"); stealStroke.Thickness = 3; stealStroke.Color = Color3.fromRGB(255,100,100); stealStroke.Parent = stealCircle
+local stealText = Instance.new("TextLabel"); stealText.Size = UDim2.new(1,0,1,-5); stealText.Position = UDim2.new(0,0,0,-2); stealText.BackgroundTransparency = 1; stealText.Text = "STL"; stealText.TextColor3 = Color3.fromRGB(255,255,255); stealText.TextSize = 16; stealText.Font = Enum.Font.GothamBold; stealText.Parent = stealCircle
+
+local hoverCircle = Instance.new("ImageButton")
+hoverCircle.Size = UDim2.new(0,50,0,50); hoverCircle.Position = UDim2.new(0.5,-25,0,17)
+hoverCircle.BackgroundColor3 = Color3.fromRGB(10,10,10); hoverCircle.BackgroundTransparency = 0; hoverCircle.Image = ""
+hoverCircle.Parent = sg; hoverCircle.ZIndex = 10; hoverCircle.Active = true; hoverCircle.Draggable = false
+hoverCircle.Visible = circleVisibility.hover
+local hoverCorner = Instance.new("UICorner"); hoverCorner.CornerRadius = UDim.new(1,0); hoverCorner.Parent = hoverCircle
+local hoverStroke = Instance.new("UIStroke"); hoverStroke.Thickness = 3; hoverStroke.Color = Color3.fromRGB(100,100,255); hoverStroke.Parent = hoverCircle
+local hoverText = Instance.new("TextLabel"); hoverText.Size = UDim2.new(1,0,1,-5); hoverText.Position = UDim2.new(0,0,0,-2); hoverText.BackgroundTransparency = 1; hoverText.Text = "FLT"; hoverText.TextColor3 = Color3.fromRGB(255,255,255); hoverText.TextSize = 16; hoverText.Font = Enum.Font.GothamBold; hoverText.Parent = hoverCircle
+
+local autoDodgeCircle = Instance.new("ImageButton")
+autoDodgeCircle.Size = UDim2.new(0,50,0,50); autoDodgeCircle.Position = UDim2.new(0.9,-25,0,17)
+autoDodgeCircle.BackgroundColor3 = Color3.fromRGB(10,10,10); autoDodgeCircle.BackgroundTransparency = 0; autoDodgeCircle.Image = ""
+autoDodgeCircle.Parent = sg; autoDodgeCircle.ZIndex = 10; autoDodgeCircle.Active = true; autoDodgeCircle.Draggable = false
+autoDodgeCircle.Visible = circleVisibility.autoDodge
+local autoDodgeCorner = Instance.new("UICorner"); autoDodgeCorner.CornerRadius = UDim.new(1,0); autoDodgeCorner.Parent = autoDodgeCircle
+local autoDodgeStroke = Instance.new("UIStroke"); autoDodgeStroke.Thickness = 3; autoDodgeStroke.Color = Color3.fromRGB(255,200,0); autoDodgeStroke.Parent = autoDodgeCircle
+local autoDodgeText = Instance.new("TextLabel"); autoDodgeText.Size = UDim2.new(1,0,1,-5); autoDodgeText.Position = UDim2.new(0,0,0,-2); autoDodgeText.BackgroundTransparency = 1; autoDodgeText.Text = "AD"; autoDodgeText.TextColor3 = Color3.fromRGB(255,255,255); autoDodgeText.TextSize = 16; autoDodgeText.Font = Enum.Font.GothamBold; autoDodgeText.Parent = autoDodgeCircle
+
+local lockCircle = Instance.new("ImageButton")
+lockCircle.Size = UDim2.new(0,50,0,50); lockCircle.Position = UDim2.new(0.9,-25,0,77)
+lockCircle.BackgroundColor3 = Color3.fromRGB(10,10,10); lockCircle.BackgroundTransparency = 0; lockCircle.Image = ""
+lockCircle.Parent = sg; lockCircle.ZIndex = 10; lockCircle.Active = true; lockCircle.Draggable = false
+lockCircle.Visible = circleVisibility.lock
+local lockCorner = Instance.new("UICorner"); lockCorner.CornerRadius = UDim.new(1,0); lockCorner.Parent = lockCircle
+local lockStroke = Instance.new("UIStroke"); lockStroke.Thickness = 3; lockStroke.Color = Color3.fromRGB(0,150,255); lockStroke.Parent = lockCircle
+local lockText = Instance.new("TextLabel"); lockText.Size = UDim2.new(1,0,1,-5); lockText.Position = UDim2.new(0,0,0,-2); lockText.BackgroundTransparency = 1; lockText.Text = "LK"; lockText.TextColor3 = Color3.fromRGB(255,255,255); lockText.TextSize = 16; lockText.Font = Enum.Font.GothamBold; lockText.Parent = lockCircle
+
+local hue = 0
+RunService.Heartbeat:Connect(function()
+    hue = (hue + 0.005) % 1
+    if leftStroke then leftStroke.Color = Color3.fromHSV(hue,1,1) end
+    if rightStroke then rightStroke.Color = Color3.fromHSV(hue,1,1) end
+    if speedStroke then speedStroke.Color = Color3.fromHSV(hue,1,1) end
+    if stealStroke then stealStroke.Color = Color3.fromHSV(hue,1,1) end
+    if hoverStroke then hoverStroke.Color = Color3.fromHSV(hue,1,1) end
+    if autoDodgeStroke then autoDodgeStroke.Color = Color3.fromHSV(hue,1,1) end
+    if lockStroke then lockStroke.Color = Color3.fromHSV(hue,1,1) end
+    if starStroke then starStroke.Color = Color3.fromHSV(hue,1,1) end
+    if mainStroke then mainStroke.Color = Color3.fromHSV(hue,1,1) end
+end)
+
+leftCircle.MouseButton1Click:Connect(function()
+    if patrolMode == "left" then stopMovement(); leftCircle.BackgroundColor3 = Color3.fromRGB(10,10,10)
+    else stopMovement(); startMovement("left"); leftCircle.BackgroundColor3 = Color3.fromRGB(40,80,40) end
+end)
+rightCircle.MouseButton1Click:Connect(function()
+    if patrolMode == "right" then stopMovement(); rightCircle.BackgroundColor3 = Color3.fromRGB(10,10,10)
+    else stopMovement(); startMovement("right"); rightCircle.BackgroundColor3 = Color3.fromRGB(80,40,40) end
+end)
+speedCircle.MouseButton1Click:Connect(function()
+    if speedBoostEnabled then
+        speedBoostEnabled = false; speedCircle.BackgroundColor3 = Color3.fromRGB(10,10,10); speedText.TextColor3 = Color3.fromRGB(255,255,255)
+    else
+        stealBoostEnabled = false; speedBoostEnabled = true
+        speedCircle.BackgroundColor3 = Color3.fromRGB(40,80,40); speedText.TextColor3 = Color3.fromRGB(100,255,100)
+        stealCircle.BackgroundColor3 = Color3.fromRGB(10,10,10); stealText.TextColor3 = Color3.fromRGB(255,255,255)
+    end
+    updateSpeed()
+end)
+stealCircle.MouseButton1Click:Connect(function()
+    if stealBoostEnabled then
+        stealBoostEnabled = false; stealCircle.BackgroundColor3 = Color3.fromRGB(10,10,10); stealText.TextColor3 = Color3.fromRGB(255,255,255)
+    else
+        speedBoostEnabled = false; stealBoostEnabled = true
+        stealCircle.BackgroundColor3 = Color3.fromRGB(80,40,40); stealText.TextColor3 = Color3.fromRGB(255,100,100)
+        speedCircle.BackgroundColor3 = Color3.fromRGB(10,10,10); speedText.TextColor3 = Color3.fromRGB(255,255,255)
+    end
+    updateSpeed()
+end)
+hoverCircle.MouseButton1Click:Connect(function()
+    hoverEnabled = not hoverEnabled
+    if hoverEnabled then
+        hoverCircle.BackgroundColor3 = Color3.fromRGB(100,100,255); hoverText.TextColor3 = Color3.fromRGB(200,200,255)
+    else
+        hoverCircle.BackgroundColor3 = Color3.fromRGB(10,10,10); hoverText.TextColor3 = Color3.fromRGB(255,255,255)
+    end
+end)
+autoDodgeCircle.MouseButton1Click:Connect(function()
+    autoDodgeEnabled = not autoDodgeEnabled
+    autoDodgeCircle.BackgroundColor3 = autoDodgeEnabled and Color3.fromRGB(255,200,0) or Color3.fromRGB(10,10,10)
+    autoDodgeText.TextColor3 = autoDodgeEnabled and Color3.fromRGB(255,255,100) or Color3.fromRGB(255,255,255)
+end)
+lockCircle.MouseButton1Click:Connect(function()
+    lockEnabled = not lockEnabled
+    if lockEnabled then
+        lockCircle.BackgroundColor3 = Color3.fromRGB(0,150,255)
+        lockText.TextColor3 = Color3.fromRGB(150,150,255)
+    else
+        lockCircle.BackgroundColor3 = Color3.fromRGB(10,10,10)
+        lockText.TextColor3 = Color3.fromRGB(255,255,255)
+        lockActive = false
+        lockTarget = nil
+        if previousPatrolMode ~= "none" then startMovement(previousPatrolMode) end
+    end
+end)
+
+local tpBtn = Instance.new("TextButton")
+tpBtn.Size = UDim2.new(0.95,0,0,35); tpBtn.Position = UDim2.new(0.025,0,0,0)
+tpBtn.BackgroundColor3 = tpMode ~= "Off" and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+tpBtn.TextColor3 = Color3.fromRGB(255,255,255); tpBtn.Text = "TP ON HIT: "..tpMode
+tpBtn.Font = Enum.Font.GothamBold; tpBtn.TextSize = 13; tpBtn.BorderSizePixel = 0; tpBtn.AutoButtonColor = false
+tpBtn.Parent = mainContainer; Instance.new("UICorner", tpBtn).CornerRadius = UDim.new(0,8)
+tpBtn.MouseButton1Click:Connect(function()
+    if tpMode == "Off" then tpMode = "Left" elseif tpMode == "Left" then tpMode = "Right" else tpMode = "Off" end
+    tpBtn.Text = "TP ON HIT: "..tpMode
+    tpBtn.BackgroundColor3 = tpMode ~= "Off" and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+end)
+
+local infBtn = Instance.new("TextButton")
+infBtn.Size = UDim2.new(0.95,0,0,35); infBtn.Position = UDim2.new(0.025,0,0,0)
+infBtn.BackgroundColor3 = infinityEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+infBtn.TextColor3 = Color3.fromRGB(255,255,255); infBtn.Text = infinityEnabled and "INF JUMP ON" or "INF JUMP OFF"
+infBtn.Font = Enum.Font.GothamBold; infBtn.TextSize = 13; infBtn.BorderSizePixel = 0; infBtn.AutoButtonColor = false
+infBtn.Parent = mainContainer; Instance.new("UICorner", infBtn).CornerRadius = UDim.new(0,8)
+infBtn.MouseButton1Click:Connect(function()
+    infinityEnabled = not infinityEnabled
+    infBtn.Text = infinityEnabled and "INF JUMP ON" or "INF JUMP OFF"
+    infBtn.BackgroundColor3 = infinityEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+end)
+
+local gravFrame = Instance.new("Frame")
+gravFrame.Size = UDim2.new(0.95,0,0,35); gravFrame.Position = UDim2.new(0.025,0,0,0)
+gravFrame.BackgroundTransparency = 1; gravFrame.Parent = mainContainer
+
+local gravBtn = Instance.new("TextButton")
+gravBtn.Size = UDim2.new(0.6,-3,1,0); gravBtn.Position = UDim2.new(0,0,0,0)
+gravBtn.BackgroundColor3 = gravityEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+gravBtn.TextColor3 = Color3.fromRGB(255,255,255); gravBtn.Text = "GRAVITY"
+gravBtn.Font = Enum.Font.GothamBold; gravBtn.TextSize = 13; gravBtn.BorderSizePixel = 0; gravBtn.AutoButtonColor = false
+gravBtn.Parent = gravFrame; Instance.new("UICorner", gravBtn).CornerRadius = UDim.new(0,8)
+
+local gravBox = Instance.new("TextBox")
+gravBox.Size = UDim2.new(0.35,-3,1,0); gravBox.Position = UDim2.new(0.65,0,0,0)
+gravBox.BackgroundColor3 = Color3.fromRGB(40,40,40); gravBox.TextColor3 = Color3.fromRGB(255,255,255)
+gravBox.Text = string.format("%.1f", gravityStrength); gravBox.Font = Enum.Font.Gotham; gravBox.TextSize = 13
+gravBox.PlaceholderText = "str"; gravBox.BorderSizePixel = 0
+gravBox.Parent = gravFrame; Instance.new("UICorner", gravBox).CornerRadius = UDim.new(0,6)
+
+gravBtn.MouseButton1Click:Connect(function()
+    gravityEnabled = not gravityEnabled
+    gravBtn.BackgroundColor3 = gravityEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+end)
+gravBox.FocusLost:Connect(function()
+    local num = tonumber(gravBox.Text)
+    if num and num >= 0.1 and num <= 1 then
+        gravityStrength = num
+    else
+        gravBox.Text = string.format("%.1f", gravityStrength)
+    end
+end)
+
+local dodgeFrame = Instance.new("Frame")
+dodgeFrame.Size = UDim2.new(0.95,0,0,35); dodgeFrame.Position = UDim2.new(0.025,0,0,0)
+dodgeFrame.BackgroundTransparency = 1; dodgeFrame.Parent = mainContainer
+
+local dodgeBtn = Instance.new("TextButton")
+dodgeBtn.Size = UDim2.new(0.6,-3,1,0); dodgeBtn.Position = UDim2.new(0,0,0,0)
+dodgeBtn.BackgroundColor3 = autoDodgeEnabled and Color3.fromRGB(255,200,0) or Color3.fromRGB(45,45,45)
+dodgeBtn.TextColor3 = Color3.fromRGB(255,255,255); dodgeBtn.Text = autoDodgeEnabled and "DODGE ON" or "DODGE OFF"
+dodgeBtn.Font = Enum.Font.GothamBold; dodgeBtn.TextSize = 13; dodgeBtn.BorderSizePixel = 0; dodgeBtn.AutoButtonColor = false
+dodgeBtn.Parent = dodgeFrame; Instance.new("UICorner", dodgeBtn).CornerRadius = UDim.new(0,8)
+
+local dodgeBox = Instance.new("TextBox")
+dodgeBox.Size = UDim2.new(0.35,-3,1,0); dodgeBox.Position = UDim2.new(0.65,0,0,0)
+dodgeBox.BackgroundColor3 = Color3.fromRGB(40,40,40); dodgeBox.TextColor3 = Color3.fromRGB(255,255,255)
+dodgeBox.Text = tostring(dodgeRange); dodgeBox.Font = Enum.Font.Gotham; dodgeBox.TextSize = 13
+dodgeBox.PlaceholderText = "range"; dodgeBox.BorderSizePixel = 0
+dodgeBox.Parent = dodgeFrame; Instance.new("UICorner", dodgeBox).CornerRadius = UDim.new(0,6)
+
+dodgeBtn.MouseButton1Click:Connect(function()
+    autoDodgeEnabled = not autoDodgeEnabled
+    dodgeBtn.BackgroundColor3 = autoDodgeEnabled and Color3.fromRGB(255,200,0) or Color3.fromRGB(45,45,45)
+    dodgeBtn.Text = autoDodgeEnabled and "DODGE ON" or "DODGE OFF"
+    if autoDodgeCircle then autoDodgeCircle.BackgroundColor3 = autoDodgeEnabled and Color3.fromRGB(255,200,0) or Color3.fromRGB(10,10,10) end
+end)
+dodgeBox.FocusLost:Connect(function()
+    local num = tonumber(dodgeBox.Text)
+    if num and num >= 5 and num <= 30 then
+        dodgeRange = num
+    else
+        dodgeBox.Text = tostring(dodgeRange)
+    end
+end)
+
+local medusaBtn = Instance.new("TextButton")
+medusaBtn.Size = UDim2.new(0.95,0,0,35); medusaBtn.Position = UDim2.new(0.025,0,0,0)
+medusaBtn.BackgroundColor3 = autoMedusaEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+medusaBtn.TextColor3 = Color3.fromRGB(255,255,255); medusaBtn.Text = "AUTO MEDUSA"
+medusaBtn.Font = Enum.Font.GothamBold; medusaBtn.TextSize = 13; medusaBtn.BorderSizePixel = 0; medusaBtn.AutoButtonColor = false
+medusaBtn.Parent = mainContainer; Instance.new("UICorner", medusaBtn).CornerRadius = UDim.new(0,8)
+medusaBtn.MouseButton1Click:Connect(function()
+    autoMedusaEnabled = not autoMedusaEnabled
+    medusaBtn.BackgroundColor3 = autoMedusaEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+    if not autoMedusaEnabled then medusaTriggeredEnemies = {} end
+end)
+
+local batFrame = Instance.new("Frame")
+batFrame.Size = UDim2.new(0.95,0,0,35); batFrame.Position = UDim2.new(0.025,0,0,0)
+batFrame.BackgroundTransparency = 1; batFrame.Parent = mainContainer
+
+local batBtn = Instance.new("TextButton")
+batBtn.Size = UDim2.new(0.6,-3,1,0); batBtn.Position = UDim2.new(0,0,0,0)
+batBtn.BackgroundColor3 = autoBatEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+batBtn.TextColor3 = Color3.fromRGB(255,255,255); batBtn.Text = "AUTO BAT"
+batBtn.Font = Enum.Font.GothamBold; batBtn.TextSize = 13; batBtn.BorderSizePixel = 0; batBtn.AutoButtonColor = false
+batBtn.Parent = batFrame; Instance.new("UICorner", batBtn).CornerRadius = UDim.new(0,8)
+
+local batBox = Instance.new("TextBox")
+batBox.Size = UDim2.new(0.35,-3,1,0); batBox.Position = UDim2.new(0.65,0,0,0)
+batBox.BackgroundColor3 = Color3.fromRGB(40,40,40); batBox.TextColor3 = Color3.fromRGB(255,255,255)
+batBox.Text = tostring(batReach); batBox.Font = Enum.Font.Gotham; batBox.TextSize = 13
+batBox.PlaceholderText = "range"; batBox.BorderSizePixel = 0
+batBox.Parent = batFrame; Instance.new("UICorner", batBox).CornerRadius = UDim.new(0,6)
+
+batBtn.MouseButton1Click:Connect(function()
+    autoBatEnabled = not autoBatEnabled
+    batBtn.BackgroundColor3 = autoBatEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+end)
+batBox.FocusLost:Connect(function()
+    local num = tonumber(batBox.Text)
+    if num and num >= 5 and num <= 60 then batReach = num else batBox.Text = tostring(batReach) end
+end)
+
+local grabFrame = Instance.new("Frame")
+grabFrame.Size = UDim2.new(0.95,0,0,35); grabFrame.Position = UDim2.new(0.025,0,0,0)
+grabFrame.BackgroundTransparency = 1; grabFrame.Parent = mainContainer
+
+local grabBtn = Instance.new("TextButton")
+grabBtn.Size = UDim2.new(0.6,-3,1,0); grabBtn.Position = UDim2.new(0,0,0,0)
+grabBtn.BackgroundColor3 = grabEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+grabBtn.TextColor3 = Color3.fromRGB(255,255,255); grabBtn.Text = "AUTO GRAB"
+grabBtn.Font = Enum.Font.GothamBold; grabBtn.TextSize = 13; grabBtn.BorderSizePixel = 0; grabBtn.AutoButtonColor = false
+grabBtn.Parent = grabFrame; Instance.new("UICorner", grabBtn).CornerRadius = UDim.new(0,8)
+
+local grabBox = Instance.new("TextBox")
+grabBox.Size = UDim2.new(0.35,-3,1,0); grabBox.Position = UDim2.new(0.65,0,0,0)
+grabBox.BackgroundColor3 = Color3.fromRGB(40,40,40); grabBox.TextColor3 = Color3.fromRGB(255,255,255)
+grabBox.Text = tostring(grabRange); grabBox.Font = Enum.Font.Gotham; grabBox.TextSize = 13
+grabBox.PlaceholderText = "range"; grabBox.BorderSizePixel = 0
+grabBox.Parent = grabFrame; Instance.new("UICorner", grabBox).CornerRadius = UDim.new(0,6)
+
+grabBtn.MouseButton1Click:Connect(function()
+    grabEnabled = not grabEnabled
+    grabBtn.BackgroundColor3 = grabEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+    if grabEnabled then startGrab() else stopGrab() end
+end)
+grabBox.FocusLost:Connect(function()
+    local num = tonumber(grabBox.Text)
+    if num and num >= 5 and num <= 100 then
+        grabRange = num
+        if grabEnabled then stopGrab(); startGrab() end
+    else grabBox.Text = tostring(grabRange) end
+end)
+
+local antiBtn = Instance.new("TextButton")
+antiBtn.Size = UDim2.new(0.95,0,0,35); antiBtn.Position = UDim2.new(0.025,0,0,0)
+antiBtn.BackgroundColor3 = antiRagdollEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+antiBtn.TextColor3 = Color3.fromRGB(255,255,255); antiBtn.Text = "ANTI-RAGDOLL"
+antiBtn.Font = Enum.Font.GothamBold; antiBtn.TextSize = 13; antiBtn.BorderSizePixel = 0; antiBtn.AutoButtonColor = false
+antiBtn.Parent = mainContainer; Instance.new("UICorner", antiBtn).CornerRadius = UDim.new(0,8)
+antiBtn.MouseButton1Click:Connect(function()
+    antiRagdollEnabled = not antiRagdollEnabled
+    antiBtn.BackgroundColor3 = antiRagdollEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+end)
+
+local respawnBtn = Instance.new("TextButton")
+respawnBtn.Size = UDim2.new(0.95,0,0,35); respawnBtn.Position = UDim2.new(0.025,0,0,0)
+respawnBtn.BackgroundColor3 = antiRespawnEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+respawnBtn.TextColor3 = Color3.fromRGB(255,255,255); respawnBtn.Text = "ANTI-RESPAWN"
+respawnBtn.Font = Enum.Font.GothamBold; respawnBtn.TextSize = 13; respawnBtn.BorderSizePixel = 0; respawnBtn.AutoButtonColor = false
+respawnBtn.Parent = mainContainer; Instance.new("UICorner", respawnBtn).CornerRadius = UDim.new(0,8)
+respawnBtn.MouseButton1Click:Connect(function()
+    antiRespawnEnabled = not antiRespawnEnabled
+    respawnBtn.BackgroundColor3 = antiRespawnEnabled and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+end)
+
+local function createSpeedInput(name, value, callback, min, max)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0.95,0,0,35); frame.Position = UDim2.new(0.025,0,0,0)
+    frame.BackgroundTransparency = 1; frame.Parent = speedContainer
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.5,-3,1,0); label.Position = UDim2.new(0,0,0,0)
+    label.BackgroundTransparency = 1; label.Text = name; label.TextColor3 = Color3.fromRGB(255,255,255)
+    label.TextSize = 13; label.Font = Enum.Font.GothamBold; label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = frame
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(0.45,-3,1,0); box.Position = UDim2.new(0.55,0,0,0)
+    box.BackgroundColor3 = Color3.fromRGB(40,40,40); box.TextColor3 = Color3.fromRGB(255,255,255)
+    box.Text = tostring(value); box.Font = Enum.Font.Gotham; box.TextSize = 13; box.BorderSizePixel = 0
+    box.Parent = frame; Instance.new("UICorner", box).CornerRadius = UDim.new(0,6)
+    box.FocusLost:Connect(function()
+        local num = tonumber(box.Text)
+        if num and num >= min and num <= max then callback(num) else box.Text = tostring(value) end
+    end)
+    return box
+end
+
+createSpeedInput("Auto Left Speed", autoLeftSpeed, function(v) autoLeftSpeed = v end, 10, 200)
+createSpeedInput("Auto Left Return", autoLeftReturnSpeed, function(v) autoLeftReturnSpeed = v end, 10, 200)
+createSpeedInput("Auto Right Speed", autoRightSpeed, function(v) autoRightSpeed = v end, 10, 200)
+createSpeedInput("Auto Right Return", autoRightReturnSpeed, function(v) autoRightReturnSpeed = v end, 10, 200)
+createSpeedInput("Speed Boost Value", speedBoostValue, function(v) speedBoostValue = v; if speedBoostEnabled then updateSpeed() end end, 10, 200)
+createSpeedInput("Steal Boost Value", stealBoostValue, function(v) stealBoostValue = v; if stealBoostEnabled then updateSpeed() end end, 10, 200)
+createSpeedInput("Jump Power", jumpForce, function(v) jumpForce = v end, 10, 200)
+
+local keybindButtons = {}
+local function createKeybindInput(name, key)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0.95,0,0,35); frame.Position = UDim2.new(0.025,0,0,0)
+    frame.BackgroundTransparency = 1; frame.Parent = keybindContainer
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.5,-3,1,0); label.Position = UDim2.new(0,0,0,0)
+    label.BackgroundTransparency = 1; label.Text = name; label.TextColor3 = Color3.fromRGB(255,255,255)
+    label.TextSize = 13; label.Font = Enum.Font.GothamBold; label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = frame
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0.45,-3,1,0); btn.Position = UDim2.new(0.55,0,0,0)
+    btn.BackgroundColor3 = Color3.fromRGB(40,40,40); btn.TextColor3 = Color3.fromRGB(255,255,255)
+    btn.Text = key; btn.Font = Enum.Font.GothamBold; btn.TextSize = 13; btn.BorderSizePixel = 0
+    btn.Parent = frame; Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
+    btn.MouseButton1Click:Connect(function()
+        waitingForKeybind = name:gsub(" ", ""):lower()
+        btn.Text = "Press Key..."; btn.BackgroundColor3 = Color3.fromRGB(80,40,40)
+    end)
+    keybindButtons[name] = btn
+    return btn
+end
+
+createKeybindInput("Auto Left", keybinds.autoLeft)
+createKeybindInput("Auto Right", keybinds.autoRight)
+createKeybindInput("Speed Boost", keybinds.speedBoost)
+createKeybindInput("Steal Boost", keybinds.stealBoost)
+createKeybindInput("Hover", keybinds.hover)
+createKeybindInput("Gravity", keybinds.gravity)
+createKeybindInput("TP On Hit", keybinds.tpOnHit)
+createKeybindInput("Infinity Jump", keybinds.infinityJump)
+createKeybindInput("Auto Dodge", keybinds.autoDodge)
+createKeybindInput("Lock", keybinds.lock)
+createKeybindInput("Auto Medusa", keybinds.autoMedusa)
+createKeybindInput("Auto Bat", keybinds.autoBat)
+createKeybindInput("Auto Grab", keybinds.autoGrab)
+createKeybindInput("Anti Ragdoll", keybinds.antiRagdoll)
+createKeybindInput("Anti Respawn", keybinds.antiRespawn)
+createKeybindInput("Toggle GUI", keybinds.toggleGUI)
+
+function updateKeybindButtons()
+    for name, btn in pairs(keybindButtons) do
+        local key = name:gsub(" ", ""):lower()
+        btn.Text = keybinds[key] or "None"
+        btn.BackgroundColor3 = Color3.fromRGB(40,40,40)
+    end
+end
+
+local function createVisibilityToggle(name, varRef, circleRef)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0.95,0,0,35); frame.Position = UDim2.new(0.025,0,0,0)
+    frame.BackgroundTransparency = 1; frame.Parent = mobileContainer
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1,0,1,0)
+    btn.BackgroundColor3 = circleRef.Visible and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+    btn.TextColor3 = Color3.fromRGB(255,255,255)
+    btn.Text = name .. ": " .. (circleRef.Visible and "ON" or "OFF")
+    btn.Font = Enum.Font.GothamBold; btn.TextSize = 13; btn.BorderSizePixel = 0
+    btn.Parent = frame; Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
+    btn.MouseButton1Click:Connect(function()
+        circleRef.Visible = not circleRef.Visible
+        circleVisibility[varRef] = circleRef.Visible
+        btn.Text = name .. ": " .. (circleRef.Visible and "ON" or "OFF")
+        btn.BackgroundColor3 = circleRef.Visible and Color3.fromRGB(40,80,40) or Color3.fromRGB(45,45,45)
+    end)
+end
+
+createVisibilityToggle("Left Circle", "left", leftCircle)
+createVisibilityToggle("Right Circle", "right", rightCircle)
+createVisibilityToggle("Speed Circle", "speed", speedCircle)
+createVisibilityToggle("Steal Circle", "steal", stealCircle)
+createVisibilityToggle("Hover Circle", "hover", hoverCircle)
+createVisibilityToggle("Auto Dodge Circle", "autoDodge", autoDodgeCircle)
+createVisibilityToggle("Lock Circle", "lock", lockCircle)
+
+local saveBtn = Instance.new("TextButton")
+saveBtn.Size = UDim2.new(0.4,0,0,35); saveBtn.Position = UDim2.new(0.5,-70,1,-45)
+saveBtn.BackgroundColor3 = Color3.fromRGB(45,45,45); saveBtn.TextColor3 = Color3.fromRGB(255,255,255)
+saveBtn.Text = "SAVE"; saveBtn.Font = Enum.Font.GothamBold; saveBtn.TextSize = 13
+saveBtn.BorderSizePixel = 0; saveBtn.AutoButtonColor = false; saveBtn.Parent = mainFrame
+Instance.new("UICorner", saveBtn).CornerRadius = UDim.new(0,8)
+saveBtn.MouseButton1Click:Connect(saveConfig)
+
+local function updateCanvasSizes()
+    mainContainer.CanvasSize = UDim2.new(0,0,0, mainLayout.AbsoluteContentSize.Y + 10)
+    speedContainer.CanvasSize = UDim2.new(0,0,0, speedLayout.AbsoluteContentSize.Y + 10)
+    keybindContainer.CanvasSize = UDim2.new(0,0,0, keybindLayout.AbsoluteContentSize.Y + 10)
+    mobileContainer.CanvasSize = UDim2.new(0,0,0, mobileLayout.AbsoluteContentSize.Y + 10)
+end
+mainLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvasSizes)
+speedLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvasSizes)
+keybindLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvasSizes)
+mobileLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvasSizes)
+task.wait(); updateCanvasSizes()
+
+sg.Destroying:Connect(function()
+    if grabLoop then grabLoop:Disconnect() end
+    if grabCircleObj then grabCircleObj:Destroy() end
+end)
+
+print("✅ Ultimate Focus Duels loaded with all features!")
